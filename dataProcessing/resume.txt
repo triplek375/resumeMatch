@@ -1,0 +1,42 @@
+Atharva Kedar
+(979) 326-2474 | atharvakedar082001@tamu.edu | linkedin.com/in/atharvakedar
+
+Summary
+MS Information Systems student with 2+ years of experience across technology, analytics, customer onboarding, and cross-functional teams. Experienced in analyzing requirements, improving processes, validating product features, and using data to support business decisions.
+
+Education
+Texas A&M University, Mays Business School | College Station, TX
+Master of Science in Management Information Systems | Aug 2026 - May 2028
+D.Y. Patil College of Engineering, SPPU | Pune, India
+Bachelor of Engineering in Information Technology | Aug 2019 - Jul 2023
+
+Experience
+Kotak Mahindra Bank | India
+Associate II Technologist | Apr 2026 - Jul 2026
+- Partnered with the analytics team to identify bottlenecks in ML scoring model delivery and helped automate the workflow end-to-end, reducing delivery time by 35% and supporting faster product decisions.
+- Standardized Airflow scheduling and monitoring across pipeline runs, improving reporting reliability and eliminating recurring downtime in executive dashboards.
+- Used AWS EMR Studio to process large datasets into scorecards used by teams for product planning, performance tracking, and ML operations.
+
+Jio Platforms Ltd. | India
+Cloud Operations Engineer | Jan 2024 - Mar 2026
+- Reviewed customer PIs/POs to understand infrastructure requirements and worked with infrastructure teams to determine resource configurations and deployment locations for automated provisioning.
+- Ran cross-functional defect and issue reviews with engineering, QA, and operations teams, helping drive resolution and provide leadership with visibility into operational issues.
+- Collaborated with Product Managers, engineering, QA, and infrastructure teams across multiple cloud products to support customer onboarding, feature validation, and release readiness.
+- Tested an autoscaling feature end-to-end across deployment scenarios and delivered a feature demonstration to stakeholders.
+- Investigated recurring deployment issues using system and telemetry data and introduced automated health checks that reduced issue detection time by 30%.
+
+Projects
+Uber Ride Data Analysis | Dec 2025 - Jan 2026
+- Analyzed 100K+ Uber ride records to identify gaps between driver supply and rider demand during peak hours and developed recommendations for improving allocation, with a projected 12-15% revenue lift.
+- Examined fare variability across time, location, and driver availability to identify factors affecting ride demand and pricing outcomes.
+- Built a Tableau dashboard to track demand, driver utilization, and revenue per driver-hour, making key operational trends easier to analyze.
+
+Cloud Data Ingestion Pipeline | Sep 2026 - Present
+- Built an automated data pipeline with schema quality checks and scheduled workflows, improving data reliability and making datasets easier to access for analysis.
+- Orchestrated workflows in Apache Airflow with downstream Athena querying, enabling self-service analytics and eliminating manual data pulls.
+
+Skills
+Business & Product: Requirements Gathering, Customer Onboarding, Feature Validation, Stakeholder Management, Process Improvement, Business Case Analysis, Root Cause Analysis, Agile/Scrum
+Analytics: SQL, Python, Excel, Tableau, Data Analysis, Data Visualization, ETL
+Cloud & Data Platforms: AWS, Amazon Redshift, AWS EMR, AWS Athena, Amazon S3, Azure Stack HCI, Red Hat OpenStack
+Infrastructure & Tools: Kubernetes, Docker, Linux, VMware, Apache Airflow, Git

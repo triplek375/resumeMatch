@@ -1,0 +1,30 @@
+roles:
+  data_engineer:
+    - data engineer
+    - analytics engineer
+    - etl
+  cloud_engineer:
+    - cloud engineer
+    - cloud infrastructure engineer
+    - platform engineer
+  marketing:
+    - marketing
+    - growth
+    - demand generation
+  nursing:
+    - nurse
+    - nursing
+    - rn
+field_map:
+  id: id
+  title: title
+  location: location.name
+  url: absolute_url
+  description: content
+request:
+  user_agent: "resumeMatch-greenhouse-scraper/1.0 (contact: replace-me@example.com)"
+  timeout_seconds: 20
+  max_retries: 4
+  backoff_seconds: 1
+  delay_min_seconds: 1
+  delay_max_seconds: 2

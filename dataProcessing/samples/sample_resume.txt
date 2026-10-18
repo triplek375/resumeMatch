@@ -1,0 +1,7 @@
+FAKE SAMPLE RESUME
+
+Data engineer with five years of experience building reliable analytics platforms and production data pipelines. Strong Python and SQL skills, with hands-on use of Apache Spark, Airflow, and AWS services including S3, Glue, and Redshift.
+
+Designed batch and streaming ingestion workflows, introduced automated data quality checks, and improved pipeline observability. Comfortable partnering with analysts and machine learning teams to deliver documented, trusted datasets.
+
+Seeking a data engineering role focused on cloud data infrastructure, scalable pipelines, and collaborative product delivery.

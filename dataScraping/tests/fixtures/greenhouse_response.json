@@ -1,0 +1,25 @@
+{
+  "jobs": [
+    {
+      "id": 101,
+      "title": "Data Engineer",
+      "location": {"name": "New York, NY"},
+      "absolute_url": "https://boards.greenhouse.io/example/jobs/101",
+      "content": "&lt;p&gt;Build reliable &amp;amp; scalable data pipelines.&lt;/p&gt;&lt;ul&gt;&lt;li&gt;Use Python and SQL&lt;/li&gt;&lt;li&gt;Own ETL workflows&lt;/li&gt;&lt;/ul&gt;"
+    },
+    {
+      "id": 102,
+      "title": "Analytics Engineer",
+      "location": {"name": "Remote"},
+      "absolute_url": "https://boards.greenhouse.io/example/jobs/102",
+      "content": "&lt;p&gt;Model trusted analytics data.&lt;/p&gt;"
+    },
+    {
+      "id": 103,
+      "title": "Registered Nurse",
+      "location": {"name": "Boston, MA"},
+      "absolute_url": "https://boards.greenhouse.io/example/jobs/103",
+      "content": "&lt;p&gt;Provide patient care.&lt;/p&gt;"
+    }
+  ]
+}

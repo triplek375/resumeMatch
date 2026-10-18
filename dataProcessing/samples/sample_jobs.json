@@ -1,0 +1,82 @@
+[
+  {
+    "id": "sample-001",
+    "title": "Data Engineer",
+    "company": "Northstar Analytics (Sample)",
+    "location": "Seattle, WA",
+    "url": "https://jobs.example.com/northstar/data-engineer",
+    "description": "Build reliable batch and streaming pipelines with Python, SQL, and Spark. Own data quality checks and collaborate with analytics teams on an AWS-based lakehouse."
+  },
+  {
+    "id": "sample-002",
+    "title": "Cloud Platform Engineer",
+    "company": "Summit Cloud Systems (Sample)",
+    "location": "Remote, US",
+    "url": "https://jobs.example.com/summit/cloud-platform-engineer",
+    "description": "Design secure AWS infrastructure using Terraform and Kubernetes. Improve CI/CD, observability, and service reliability with product engineering teams."
+  },
+  {
+    "id": "sample-003",
+    "title": "Marketing Data Analyst",
+    "company": "BrightField Creative (Sample)",
+    "location": "Austin, TX",
+    "url": "https://jobs.example.com/brightfield/marketing-analyst",
+    "description": "Analyze campaign performance, attribution, and customer segments. Use SQL, dashboards, and experimentation to turn marketing data into practical recommendations."
+  },
+  {
+    "id": "sample-004",
+    "title": "Registered Nurse, Medical-Surgical",
+    "company": "Cedar Valley Health (Sample)",
+    "location": "Portland, OR",
+    "url": "https://jobs.example.com/cedarvalley/registered-nurse",
+    "description": "Provide compassionate bedside care on a medical-surgical unit. Coordinate with physicians, document patient progress, and support safe discharge planning."
+  },
+  {
+    "id": "sample-005",
+    "title": "Senior Data Engineer, Machine Learning",
+    "company": "Meridian Research (Sample)",
+    "location": "Boston, MA",
+    "url": "https://jobs.example.com/meridian/ml-data-engineer",
+    "description": "Develop feature pipelines and model data infrastructure with Python, Spark, and cloud storage. Partner with machine learning scientists on production workflows."
+  },
+  {
+    "id": "sample-006",
+    "title": "Lifecycle Marketing Manager",
+    "company": "Juniper Market (Sample)",
+    "location": "Remote, US",
+    "url": "https://jobs.example.com/juniper/lifecycle-marketing",
+    "description": "Plan email and in-app campaigns across the customer journey. Use segmentation, A/B testing, and marketing automation to improve retention and conversion."
+  },
+  {
+    "id": "sample-007",
+    "title": "DevOps Engineer",
+    "company": "Anchor Point Software (Sample)",
+    "location": "Denver, CO",
+    "url": "https://jobs.example.com/anchorpoint/devops-engineer",
+    "description": "Automate cloud deployments and support Kubernetes services. Maintain infrastructure as code, monitoring, incident response, and developer tooling."
+  },
+  {
+    "id": "sample-008",
+    "title": "Pediatric Registered Nurse",
+    "company": "Lakeside Children's Clinic (Sample)",
+    "location": "Chicago, IL",
+    "url": "https://jobs.example.com/lakeside/pediatric-nurse",
+    "description": "Deliver family-centered pediatric nursing care in an outpatient clinic. Educate caregivers, coordinate referrals, and maintain accurate clinical records."
+  },
+  {
+    "id": "sample-009",
+    "title": "Business Intelligence Developer",
+    "company": "Clearwater Supply Co. (Sample)",
+    "location": "Minneapolis, MN",
+    "url": "https://jobs.example.com/clearwater/bi-developer",
+    "description": "Create trusted reporting datasets and dashboards with SQL and a cloud data warehouse. Gather requirements from operations, finance, and sales partners."
+  },
+  {
+    "id": "sample-010",
+    "title": "Technical Content Marketing Specialist",
+    "company": "Orbit Learning Labs (Sample)",
+    "location": "Remote, US",
+    "url": "https://jobs.example.com/orbit/content-marketing",
+    "description": "Write clear technical articles, customer stories, and launch materials for a software audience. Coordinate with product, design, and demand generation teams."
+  }
+]
