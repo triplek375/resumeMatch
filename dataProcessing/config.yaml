@@ -1,0 +1,12 @@
+model_name: BAAI/bge-m3
+max_seq_length: 2048
+batch_size: 8
+top_n: 20
+vector_dimension: 1024
+field_map:
+  id: id
+  title: title
+  company: company
+  location: location
+  url: url
+  description: description
