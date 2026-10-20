@@ -55,9 +55,12 @@ def test_field_mapping_produces_the_normalized_job_contract():
     )
 
     assert list(job) == [
-        "id", "title", "company", "location", "url", "description", "source", "scraped_at"
+        "source", "id", "company", "title", "location", "url", "description", "scraped_at"
     ]
+    assert job["source"] == "greenhouse"
     assert job["id"] == "101"
+    assert job["company"] == "Example"
+    assert job["title"] == "Data Engineer"
     assert job["location"] == "New York, NY"
     assert job["url"] == "https://boards.greenhouse.io/example/jobs/101"
     assert "- Own ETL workflows" in job["description"]
@@ -84,7 +87,7 @@ def test_load_company_tokens_rejects_placeholder(tmp_path):
 def test_failed_boards_do_not_overwrite_previous_output(tmp_path, monkeypatch):
     token_path = tmp_path / "boards.txt"
     token_path.write_text("invalid-board\n", encoding="utf-8")
-    output_path = tmp_path / "data" / "jobs" / "greenhouse_data_engineer.csv"
+    output_path = tmp_path / "data" / "jobs.csv"
     output_path.parent.mkdir(parents=True)
     output_path.write_text("previous results", encoding="utf-8")
     monkeypatch.setattr(
@@ -121,7 +124,7 @@ def test_scrape_role_writes_normalized_jobs_as_csv(tmp_path, monkeypatch):
         session=object(),
     )
 
-    output_path = tmp_path / "data" / "jobs" / "greenhouse_data_engineer.csv"
+    output_path = tmp_path / "data" / "jobs.csv"
     with output_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
         reader = csv.DictReader(csv_file)
         rows = list(reader)
@@ -129,8 +132,9 @@ def test_scrape_role_writes_normalized_jobs_as_csv(tmp_path, monkeypatch):
     assert len(selected) == 1
     assert len(rows) == 1
     assert reader.fieldnames == [
-        "id", "title", "company", "location", "url", "description", "source", "scraped_at"
+        "source", "id", "company", "title", "location", "url", "description", "scraped_at"
     ]
+    assert rows[0]["source"] == "greenhouse"
     assert rows[0]["title"] == "Data Engineer"
     assert "- Own ETL workflows" in rows[0]["description"]
 
@@ -169,7 +173,73 @@ def test_scrape_role_with_exact_string_without_expansion(tmp_path, monkeypatch):
         session=object(),
     )
 
-    output_path = tmp_path / "data" / "jobs" / "greenhouse_data_engineer.csv"
+    output_path = tmp_path / "data" / "jobs.csv"
     assert output_path.exists()
     assert len(selected) == 1
     assert selected[0]["title"] == "Data Engineer"
+
+
+def test_scrape_multiple_roles_writes_single_jobs_csv(tmp_path, monkeypatch):
+    token_path = tmp_path / "search.txt"
+    token_path.write_text(
+        "#companies\nexample\n\n#roles\ndata engineer\nanalytics engineer\n",
+        encoding="utf-8",
+    )
+    fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    monkeypatch.setattr(
+        "dataScraping.greenhouse.fetch_company_jobs",
+        lambda *args: (fixture["jobs"], False),
+    )
+
+    selected = scrape_role(
+        ["data engineer", "analytics engineer"],
+        companies_path=token_path,
+        project_root=tmp_path,
+        session=object(),
+    )
+
+    output_path = tmp_path / "data" / "jobs.csv"
+    assert output_path.exists()
+    assert not (tmp_path / "data" / "jobs").exists()
+    with output_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+        reader = csv.DictReader(csv_file)
+        rows = list(reader)
+
+    assert reader.fieldnames == [
+        "source", "id", "company", "title", "location", "url", "description", "scraped_at"
+    ]
+    assert len(selected) == 2
+    assert len(rows) == 2
+    assert [row["title"] for row in rows] == ["Data Engineer", "Analytics Engineer"]
+
+
+def test_main_cli_writes_single_jobs_csv(tmp_path, monkeypatch):
+    from dataScraping.greenhouse import main
+
+    search_file = tmp_path / "search.txt"
+    search_file.write_text(
+        "#companies\nexample\n\n#roles\ndata engineer\nanalytics engineer\n",
+        encoding="utf-8",
+    )
+    fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    monkeypatch.setattr(
+        "dataScraping.greenhouse.fetch_company_jobs",
+        lambda *args: (fixture["jobs"], False),
+    )
+    monkeypatch.setattr("dataScraping.greenhouse.PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["greenhouse.py", "--companies", str(search_file)],
+    )
+
+    main()
+
+    output_path = tmp_path / "data" / "jobs.csv"
+    assert output_path.exists()
+    with output_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+        reader = csv.DictReader(csv_file)
+        rows = list(reader)
+    assert len(rows) == 2
+    assert reader.fieldnames == [
+        "source", "id", "company", "title", "location", "url", "description", "scraped_at"
+    ]

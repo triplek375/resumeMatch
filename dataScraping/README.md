@@ -2,7 +2,7 @@
 
 Supply the Greenhouse board tokens you want searched; this project does not bake in a fixed company list. Greenhouse's public API requires a board token for every company and does not expose a global all-company search endpoint. The scraper accepts a TXT file with one token per line, a YAML list, or a JSON list (or an object with a `companies` list). Tokens that return 404 are logged and skipped.
 
-The scraper caches raw successful API responses as JSON in `data/raw/greenhouse/` before parsing. It reuses those files on later runs unless `--refresh` is supplied, filters titles using `config.yaml`, and writes normalized results as CSV to `data/jobs/greenhouse_{role}.csv`.
+The scraper caches raw successful API responses as JSON in `data/raw/greenhouse/` before parsing. It reuses those files on later runs unless `--refresh` is supplied, filters titles matching target roles, and writes normalized results as CSV to `data/jobs.csv`.
 
 ## PowerShell setup
 

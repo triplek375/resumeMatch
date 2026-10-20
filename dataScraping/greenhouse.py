@@ -23,13 +23,13 @@ PROJECT_ROOT = DATA_SCRAPING_DIR.parent
 CONFIG_PATH = DATA_SCRAPING_DIR / "config.yaml"
 LOGGER = logging.getLogger("dataScraping.greenhouse")
 OUTPUT_FIELDS = (
+    "source",
     "id",
-    "title",
     "company",
+    "title",
     "location",
     "url",
     "description",
-    "source",
     "scraped_at",
 )
 
@@ -93,15 +93,16 @@ def load_yaml(path: Path) -> Any:
 
 
 def resolve_search_path(
-    path: Optional[Path] = None, project_root: Path = PROJECT_ROOT
+    path: Optional[Path] = None, project_root: Optional[Path] = None
 ) -> Path:
     """Resolve the search tokens file, checking project root for search.txt."""
     if path is not None:
         return path
-    search_root = project_root / "search.txt"
+    root = project_root if project_root is not None else PROJECT_ROOT
+    search_root = root / "search.txt"
     if search_root.exists():
         return search_root
-    board_root = project_root / "board_tokens.txt"
+    board_root = root / "board_tokens.txt"
     if board_root.exists():
         return board_root
     return search_root
@@ -213,13 +214,13 @@ def normalize_job(
         source_id = hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
     return {
+        "source": "greenhouse",
         "id": str(source_id),
-        "title": title,
         "company": company,
+        "title": title,
         "location": location,
         "url": url,
         "description": description,
-        "source": "greenhouse",
         "scraped_at": scraped_at,
     }
 
@@ -291,18 +292,21 @@ def scrape_role(
     role: Union[str, Sequence[str]],
     refresh: bool = False,
     limit_companies: Optional[int] = None,
-    config_path: Path = CONFIG_PATH,
+    config_path: Optional[Path] = None,
     companies_path: Optional[Path] = None,
-    project_root: Path = PROJECT_ROOT,
+    project_root: Optional[Path] = None,
     session: Optional[requests.Session] = None,
+    output_path: Optional[Path] = None,
 ) -> list[dict[str, str]]:
-    """Scrape configured companies and write normalized postings matching role strings."""
-    resolved_companies_path = resolve_board_tokens_path(companies_path, project_root)
+    """Scrape configured companies and write normalized postings matching role strings to a single jobs CSV."""
+    root = project_root if project_root is not None else PROJECT_ROOT
+    cfg_path = config_path if config_path is not None else CONFIG_PATH
+    resolved_companies_path = resolve_board_tokens_path(companies_path, root)
     if not resolved_companies_path.exists():
         raise ValueError(
             f"Company tokens file not found at {resolved_companies_path}. Provide a valid file with --companies."
         )
-    config = load_yaml(config_path)
+    config = load_yaml(cfg_path)
     companies = load_company_tokens(resolved_companies_path)
 
     # Use exact role strings without keyword expansion
@@ -315,12 +319,6 @@ def scrape_role(
     if not keywords:
         raise ValueError("No valid role search strings provided.")
 
-    role_slug = (
-        re.sub(r"[^\w]+", "_", keywords[0].lower()).strip("_")
-        if len(keywords) == 1
-        else "jobs"
-    )
-
     if limit_companies is not None and limit_companies < 1:
         raise ValueError("--limit-companies must be at least 1.")
     if limit_companies is not None:
@@ -328,8 +326,10 @@ def scrape_role(
 
     request_config = config["request"]
     field_map = config["field_map"]
-    cache_dir = project_root / "data" / "raw" / "greenhouse"
-    output_path = project_root / "data" / "jobs" / f"greenhouse_{role_slug}.csv"
+    cache_dir = root / "data" / "raw" / "greenhouse"
+    resolved_output_path = (
+        Path(output_path) if output_path is not None else root / "data" / "jobs.csv"
+    )
     timestamp = datetime.now(timezone.utc).isoformat()
     matching_jobs: list[dict[str, str]] = []
     successful_boards = 0
@@ -389,13 +389,33 @@ def scrape_role(
             "Check that the board tokens are valid and try again."
         )
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8-sig", newline="") as output_file:
+    # Deduplicate jobs by id while preserving order
+    deduped_jobs: list[dict[str, str]] = []
+    seen_ids: set[str] = set()
+    for job in matching_jobs:
+        job_id = job.get("id") or job.get("url") or ""
+        if job_id and job_id in seen_ids:
+            continue
+        if job_id:
+            seen_ids.add(job_id)
+        deduped_jobs.append(job)
+    matching_jobs = deduped_jobs
+
+    resolved_output_path.parent.mkdir(parents=True, exist_ok=True)
+    with resolved_output_path.open("w", encoding="utf-8-sig", newline="") as output_file:
         writer = csv.DictWriter(output_file, fieldnames=OUTPUT_FIELDS)
         writer.writeheader()
         writer.writerows(matching_jobs)
-    LOGGER.info("role=%s total_kept=%d output=%s", role_slug, len(matching_jobs), output_path)
+    LOGGER.info(
+        "roles=%s total_kept=%d output=%s",
+        keywords,
+        len(matching_jobs),
+        resolved_output_path,
+    )
     return matching_jobs
+
+
+scrape_jobs = scrape_role
 
 
 def main() -> None:
@@ -413,6 +433,12 @@ def main() -> None:
     )
     parser.add_argument("--refresh", action="store_true", help="Refresh raw response caches")
     parser.add_argument("--limit-companies", type=int, help="Test with the first N companies")
+    parser.add_argument(
+        "--output",
+        required=False,
+        type=Path,
+        help="Output CSV path (defaults to data/jobs.csv)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -440,14 +466,14 @@ def main() -> None:
             )
 
     try:
-        for target_role in roles_to_scrape:
-            LOGGER.info("Scraping for role: %s", target_role)
-            scrape_role(
-                target_role,
-                args.refresh,
-                args.limit_companies,
-                companies_path=tokens_path,
-            )
+        LOGGER.info("Scraping for role(s): %s", ", ".join(roles_to_scrape))
+        scrape_role(
+            roles_to_scrape,
+            refresh=args.refresh,
+            limit_companies=args.limit_companies,
+            companies_path=tokens_path,
+            output_path=args.output,
+        )
     except (ValueError, RuntimeError) as error:
         parser.error(str(error))
 
