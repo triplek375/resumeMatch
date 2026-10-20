@@ -32,6 +32,10 @@ OUTPUT_FIELDS = (
     "description",
     "scraped_at",
 )
+COMPANIES_OUTPUT_FIELDS = (
+    "company",
+    "reason",
+)
 
 
 class _ReadableHTMLParser(HTMLParser):
@@ -297,8 +301,9 @@ def scrape_role(
     project_root: Optional[Path] = None,
     session: Optional[requests.Session] = None,
     output_path: Optional[Path] = None,
+    companies_output_path: Optional[Path] = None,
 ) -> list[dict[str, str]]:
-    """Scrape configured companies and write normalized postings matching role strings to a single jobs CSV."""
+    """Scrape configured companies, write matching postings to jobs CSV, and log unmatched companies."""
     root = project_root if project_root is not None else PROJECT_ROOT
     cfg_path = config_path if config_path is not None else CONFIG_PATH
     resolved_companies_path = resolve_board_tokens_path(companies_path, root)
@@ -330,8 +335,14 @@ def scrape_role(
     resolved_output_path = (
         Path(output_path) if output_path is not None else root / "data" / "jobs.csv"
     )
+    resolved_companies_output_path = (
+        Path(companies_output_path)
+        if companies_output_path is not None
+        else root / "data" / "companies.csv"
+    )
     timestamp = datetime.now(timezone.utc).isoformat()
     matching_jobs: list[dict[str, str]] = []
+    unmatched_companies: list[dict[str, str]] = []
     successful_boards = 0
     owned_session = session is None
     http = session or requests.Session()
@@ -350,12 +361,17 @@ def scrape_role(
                 time.sleep(delay)
             if making_request:
                 network_requests += 1
+            raw_jobs = None
             try:
                 raw_jobs, cached = fetch_company_jobs(
                     token, cache_dir, refresh, http, request_config
                 )
                 if raw_jobs is None:
                     LOGGER.error("company=%s fetched=0 kept=0 error=HTTP 404", token)
+                    unmatched_companies.append({
+                        "company": token,
+                        "reason": "NoMatchingCompany",
+                    })
                     continue
                 successful_boards += 1
                 normalized = [
@@ -364,6 +380,11 @@ def scrape_role(
                     if isinstance(job, Mapping)
                 ]
                 kept = filter_jobs(normalized, keywords)
+                if not kept:
+                    unmatched_companies.append({
+                        "company": token,
+                        "reason": "NoMatchingJob",
+                    })
                 matching_jobs.extend(kept)
                 cache_note = " cache=hit" if cached else ""
                 LOGGER.info(
@@ -379,9 +400,25 @@ def scrape_role(
                     token,
                     error,
                 )
+                if raw_jobs is None:
+                    unmatched_companies.append({
+                        "company": token,
+                        "reason": "NoMatchingCompany",
+                    })
     finally:
         if owned_session:
             http.close()
+
+    resolved_companies_output_path.parent.mkdir(parents=True, exist_ok=True)
+    with resolved_companies_output_path.open("w", encoding="utf-8-sig", newline="") as comp_file:
+        writer = csv.DictWriter(comp_file, fieldnames=COMPANIES_OUTPUT_FIELDS)
+        writer.writeheader()
+        writer.writerows(unmatched_companies)
+    LOGGER.info(
+        "unmatched_companies=%d output=%s",
+        len(unmatched_companies),
+        resolved_companies_output_path,
+    )
 
     if successful_boards == 0:
         raise RuntimeError(
@@ -439,6 +476,12 @@ def main() -> None:
         type=Path,
         help="Output CSV path (defaults to data/jobs.csv)",
     )
+    parser.add_argument(
+        "--companies-output",
+        required=False,
+        type=Path,
+        help="Output CSV path for unmatched companies (defaults to data/companies.csv)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -473,6 +516,7 @@ def main() -> None:
             limit_companies=args.limit_companies,
             companies_path=tokens_path,
             output_path=args.output,
+            companies_output_path=args.companies_output,
         )
     except (ValueError, RuntimeError) as error:
         parser.error(str(error))

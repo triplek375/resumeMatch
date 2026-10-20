@@ -4,6 +4,8 @@ Supply the Greenhouse board tokens you want searched; this project does not bake
 
 The scraper caches raw successful API responses as JSON in `data/raw/greenhouse/` before parsing. It reuses those files on later runs unless `--refresh` is supplied, filters titles matching target roles, and writes normalized results as CSV to `data/jobs.csv`.
 
+For companies where the board was not found (HTTP 404) or where no matching roles were found, an entry is written to `data/companies.csv` with columns `company,reason`. The reason will be `NoMatchingCompany` or `NoMatchingJob`.
+
 ## PowerShell setup
 
 Run from the project root with Python 3.10 or newer:

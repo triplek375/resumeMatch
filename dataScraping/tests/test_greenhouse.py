@@ -243,3 +243,118 @@ def test_main_cli_writes_single_jobs_csv(tmp_path, monkeypatch):
     assert reader.fieldnames == [
         "source", "id", "company", "title", "location", "url", "description", "scraped_at"
     ]
+    companies_csv = tmp_path / "data" / "companies.csv"
+    assert companies_csv.exists()
+    with companies_csv.open("r", encoding="utf-8-sig", newline="") as comp_file:
+        reader = csv.DictReader(comp_file)
+        rows = list(reader)
+    assert len(rows) == 0
+    assert reader.fieldnames == ["company", "reason"]
+
+
+def test_main_cli_custom_companies_output(tmp_path, monkeypatch):
+    from dataScraping.greenhouse import main
+
+    search_file = tmp_path / "search.txt"
+    search_file.write_text(
+        "#companies\nexample\nnot-found-co\n\n#roles\ndata engineer\n",
+        encoding="utf-8",
+    )
+    fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+
+    def mock_fetch(token, *args, **kwargs):
+        if token == "example":
+            return fixture["jobs"], False
+        return None, False
+
+    monkeypatch.setattr("dataScraping.greenhouse.fetch_company_jobs", mock_fetch)
+    monkeypatch.setattr("dataScraping.greenhouse.PROJECT_ROOT", tmp_path)
+    custom_comp_csv = tmp_path / "custom_unmatched.csv"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["greenhouse.py", "--companies", str(search_file), "--companies-output", str(custom_comp_csv)],
+    )
+
+    main()
+
+    assert custom_comp_csv.exists()
+    with custom_comp_csv.open("r", encoding="utf-8-sig", newline="") as comp_file:
+        reader = csv.DictReader(comp_file)
+        rows = list(reader)
+    assert len(rows) == 1
+    assert rows[0] == {"company": "not-found-co", "reason": "NoMatchingCompany"}
+
+
+def test_scrape_records_unmatched_companies_with_reasons(tmp_path, monkeypatch):
+    search_file = tmp_path / "search.txt"
+    search_file.write_text(
+        "#companies\ncompany-matching\ncompany-no-jobs\ncompany-not-found\n\n#roles\ndata engineer\n",
+        encoding="utf-8",
+    )
+    fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+
+    def mock_fetch(token, *args, **kwargs):
+        if token == "company-matching":
+            return fixture["jobs"], False
+        elif token == "company-no-jobs":
+            return [{"id": 999, "title": "Marketing Manager", "content": "Ad campaigns"}], False
+        elif token == "company-not-found":
+            return None, False
+        raise ValueError(f"Unexpected token: {token}")
+
+    monkeypatch.setattr("dataScraping.greenhouse.fetch_company_jobs", mock_fetch)
+
+    selected = scrape_role(
+        "data engineer",
+        companies_path=search_file,
+        project_root=tmp_path,
+        session=object(),
+    )
+
+    jobs_csv = tmp_path / "data" / "jobs.csv"
+    companies_csv = tmp_path / "data" / "companies.csv"
+
+    assert jobs_csv.exists()
+    assert companies_csv.exists()
+    assert len(selected) == 1
+    assert selected[0]["company"] == "Company Matching"
+
+    with companies_csv.open("r", encoding="utf-8-sig", newline="") as comp_file:
+        reader = csv.DictReader(comp_file)
+        comp_rows = list(reader)
+
+    assert reader.fieldnames == ["company", "reason"]
+    assert comp_rows == [
+        {"company": "company-no-jobs", "reason": "NoMatchingJob"},
+        {"company": "company-not-found", "reason": "NoMatchingCompany"},
+    ]
+
+
+def test_failed_boards_still_write_companies_csv(tmp_path, monkeypatch):
+    token_path = tmp_path / "search.txt"
+    token_path.write_text("invalid-one\ninvalid-two\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "dataScraping.greenhouse.fetch_company_jobs",
+        lambda *args: (None, False),
+    )
+
+    with pytest.raises(RuntimeError, match="No Greenhouse boards returned"):
+        scrape_role(
+            "data engineer",
+            companies_path=token_path,
+            project_root=tmp_path,
+            session=object(),
+        )
+
+    companies_csv = tmp_path / "data" / "companies.csv"
+    assert companies_csv.exists()
+    with companies_csv.open("r", encoding="utf-8-sig", newline="") as comp_file:
+        reader = csv.DictReader(comp_file)
+        rows = list(reader)
+
+    assert reader.fieldnames == ["company", "reason"]
+    assert rows == [
+        {"company": "invalid-one", "reason": "NoMatchingCompany"},
+        {"company": "invalid-two", "reason": "NoMatchingCompany"},
+    ]
+
