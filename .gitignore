@@ -1,6 +1,7 @@
 #data
-data/jobs.csv
 data/raw
+data/companies.csv
+data/jobs.csv
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
