@@ -1,7 +1,8 @@
+#root folder
+/search.txt
+
 #data
 data/raw
-data/companies.csv
-data/jobs.csv
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

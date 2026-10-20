@@ -14,19 +14,19 @@ CREATE TABLE IF NOT EXISTS jobs (
   url         VARCHAR(1000),
   url_hash    CHAR(64)     NOT NULL UNIQUE,   -- SHA-256 of the url, used to dedupe
   description MEDIUMTEXT,
+  embedding   VECTOR(1024),                   -- BGE-M3 = 1024 dimensions (NULL until embedded)
   scraped_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_company (company),
   INDEX idx_title (title(100))
 ) ENGINE=InnoDB;
 
--- 2. One vector per job (only ONE vector index is allowed per table)
-CREATE TABLE IF NOT EXISTS job_embeddings (
-  job_id     BIGINT PRIMARY KEY,
-  model      VARCHAR(100) NOT NULL,           -- e.g. BAAI/bge-m3
-  embedding  VECTOR(1024) NOT NULL,           -- BGE-M3 = 1024 dimensions
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  VECTOR INDEX (embedding) M=8 DISTANCE=cosine,
-  FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
+-- 2. Companies / Board status (logs unmatched companies or scraper status)
+CREATE TABLE IF NOT EXISTS companies (
+  id          BIGINT AUTO_INCREMENT PRIMARY KEY,
+  company     VARCHAR(255) NOT NULL,
+  reason      VARCHAR(100) NOT NULL,          -- e.g. NoMatchingCompany, NoMatchingJob
+  scraped_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_company (company)
 ) ENGINE=InnoDB;
 
 -- 3. Your resume(s). No vector index needed, you only compare against it
@@ -51,3 +51,13 @@ CREATE TABLE IF NOT EXISTS match_results (
   FOREIGN KEY (resume_id) REFERENCES resumes(id) ON DELETE CASCADE,
   FOREIGN KEY (job_id)    REFERENCES jobs(id)    ON DELETE CASCADE
 ) ENGINE=InnoDB;
+
+-- 5. User and role setup
+-- Grants privileges for application user 'resumematch'
+CREATE USER IF NOT EXISTS 'resumematch'@'localhost' IDENTIFIED BY 'resumematch_pass';
+GRANT ALL PRIVILEGES ON resumematch.* TO 'resumematch'@'localhost';
+
+CREATE USER IF NOT EXISTS 'resumematch'@'127.0.0.1' IDENTIFIED BY 'resumematch_pass';
+GRANT ALL PRIVILEGES ON resumematch.* TO 'resumematch'@'127.0.0.1';
+
+FLUSH PRIVILEGES;
