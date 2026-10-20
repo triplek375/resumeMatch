@@ -12,7 +12,7 @@ import time
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence, Union
 
 import requests
 import yaml
@@ -92,35 +92,98 @@ def load_yaml(path: Path) -> Any:
         return yaml.safe_load(yaml_file)
 
 
-def load_company_tokens(path: Path) -> list[str]:
-    """Read board tokens from TXT, YAML, or JSON without a baked-in company list."""
+def resolve_search_path(
+    path: Optional[Path] = None, project_root: Path = PROJECT_ROOT
+) -> Path:
+    """Resolve the search tokens file, checking project root for search.txt."""
+    if path is not None:
+        return path
+    search_root = project_root / "search.txt"
+    if search_root.exists():
+        return search_root
+    board_root = project_root / "board_tokens.txt"
+    if board_root.exists():
+        return board_root
+    return search_root
+
+
+# Backwards compatibility alias
+resolve_board_tokens_path = resolve_search_path
+
+
+def parse_board_file(path: Path) -> tuple[list[str], list[str]]:
+    """Read company tokens and optional roles from TXT, YAML, or JSON."""
     suffix = path.suffix.lower()
+    companies: list[str] = []
+    roles: list[str] = []
+
     if suffix == ".txt":
+        current_section = "companies"
         with path.open("r", encoding="utf-8-sig") as token_file:
-            tokens = [
-                line.strip()
-                for line in token_file
-                if line.strip() and not line.lstrip().startswith("#")
-            ]
+            for line in token_file:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if stripped.startswith("#"):
+                    header = stripped.lstrip("#").strip().lower()
+                    if header in {"companies", "company", "boards", "board", "board_tokens", "tokens"}:
+                        current_section = "companies"
+                        continue
+                    elif header in {"roles", "role", "keywords", "keyword", "titles", "title"}:
+                        current_section = "roles"
+                        continue
+                    else:
+                        continue
+                if current_section == "roles":
+                    roles.append(stripped)
+                else:
+                    companies.append(stripped)
     elif suffix in {".yaml", ".yml"}:
         data = load_yaml(path)
-        tokens = data.get("companies") if isinstance(data, dict) else data
+        if isinstance(data, dict):
+            raw_companies = data.get("companies", [])
+            raw_roles = data.get("roles", [])
+            if isinstance(raw_companies, list):
+                companies = [str(c) for c in raw_companies]
+            if isinstance(raw_roles, list):
+                roles = [str(r) for r in raw_roles]
+        elif isinstance(data, list):
+            companies = [str(c) for c in data]
     elif suffix == ".json":
         with path.open("r", encoding="utf-8-sig") as token_file:
             data = json.load(token_file)
-        tokens = data.get("companies") if isinstance(data, dict) else data
+        if isinstance(data, dict):
+            raw_companies = data.get("companies", [])
+            raw_roles = data.get("roles", [])
+            if isinstance(raw_companies, list):
+                companies = [str(c) for c in raw_companies]
+            if isinstance(raw_roles, list):
+                roles = [str(r) for r in raw_roles]
+        elif isinstance(data, list):
+            companies = [str(c) for c in data]
     else:
         raise ValueError("Company tokens file must be .txt, .yaml, .yml, or .json.")
 
-    if not isinstance(tokens, list) or any(not isinstance(token, str) for token in tokens):
-        raise ValueError("Company tokens must be a list of strings.")
-    normalized = list(dict.fromkeys(token.strip() for token in tokens if token.strip()))
-    if not normalized:
+    normalized_companies = list(dict.fromkeys(c.strip() for c in companies if c.strip()))
+    normalized_roles = list(dict.fromkeys(r.strip() for r in roles if r.strip()))
+    return normalized_companies, normalized_roles
+
+
+def load_company_tokens(path: Path) -> list[str]:
+    """Read board tokens from TXT, YAML, or JSON without a baked-in company list."""
+    companies, _ = parse_board_file(path)
+    if not companies:
         raise ValueError("Company tokens file contains no board tokens.")
     placeholder_markers = ("replace-with", "your-real-token", "<token>")
-    if any(marker in token.casefold() for token in normalized for marker in placeholder_markers):
+    if any(marker in token.casefold() for token in companies for marker in placeholder_markers):
         raise ValueError("Replace placeholder entries with real Greenhouse board tokens.")
-    return normalized
+    return companies
+
+
+def load_roles(path: Path) -> list[str]:
+    """Read target roles from TXT, YAML, or JSON if specified."""
+    _, roles = parse_board_file(path)
+    return roles
 
 
 def _mapped_value(row: Mapping[str, Any], source_path: str) -> Any:
@@ -225,7 +288,7 @@ def fetch_company_jobs(
 
 
 def scrape_role(
-    role: str,
+    role: Union[str, Sequence[str]],
     refresh: bool = False,
     limit_companies: Optional[int] = None,
     config_path: Path = CONFIG_PATH,
@@ -233,14 +296,31 @@ def scrape_role(
     project_root: Path = PROJECT_ROOT,
     session: Optional[requests.Session] = None,
 ) -> list[dict[str, str]]:
-    """Scrape configured companies and write normalized postings for a role."""
-    if companies_path is None:
-        raise ValueError("Provide a board-token file with --companies.")
+    """Scrape configured companies and write normalized postings matching role strings."""
+    resolved_companies_path = resolve_board_tokens_path(companies_path, project_root)
+    if not resolved_companies_path.exists():
+        raise ValueError(
+            f"Company tokens file not found at {resolved_companies_path}. Provide a valid file with --companies."
+        )
     config = load_yaml(config_path)
-    companies = load_company_tokens(companies_path)
-    roles = config.get("roles", {})
-    if role not in roles:
-        raise ValueError(f"Unknown role '{role}'. Available roles: {', '.join(roles)}")
+    companies = load_company_tokens(resolved_companies_path)
+
+    # Use exact role strings without keyword expansion
+    if isinstance(role, str):
+        target_role_strings = [role]
+    else:
+        target_role_strings = list(role)
+
+    keywords = [r.replace("_", " ").strip() for r in target_role_strings if r.strip()]
+    if not keywords:
+        raise ValueError("No valid role search strings provided.")
+
+    role_slug = (
+        re.sub(r"[^\w]+", "_", keywords[0].lower()).strip("_")
+        if len(keywords) == 1
+        else "jobs"
+    )
+
     if limit_companies is not None and limit_companies < 1:
         raise ValueError("--limit-companies must be at least 1.")
     if limit_companies is not None:
@@ -249,7 +329,7 @@ def scrape_role(
     request_config = config["request"]
     field_map = config["field_map"]
     cache_dir = project_root / "data" / "raw" / "greenhouse"
-    output_path = project_root / "data" / "jobs" / f"greenhouse_{role}.csv"
+    output_path = project_root / "data" / "jobs" / f"greenhouse_{role_slug}.csv"
     timestamp = datetime.now(timezone.utc).isoformat()
     matching_jobs: list[dict[str, str]] = []
     successful_boards = 0
@@ -283,7 +363,7 @@ def scrape_role(
                     for job in raw_jobs
                     if isinstance(job, Mapping)
                 ]
-                kept = filter_jobs(normalized, roles[role])
+                kept = filter_jobs(normalized, keywords)
                 matching_jobs.extend(kept)
                 cache_note = " cache=hit" if cached else ""
                 LOGGER.info(
@@ -314,18 +394,22 @@ def scrape_role(
         writer = csv.DictWriter(output_file, fieldnames=OUTPUT_FIELDS)
         writer.writeheader()
         writer.writerows(matching_jobs)
-    LOGGER.info("role=%s total_kept=%d output=%s", role, len(matching_jobs), output_path)
+    LOGGER.info("role=%s total_kept=%d output=%s", role_slug, len(matching_jobs), output_path)
     return matching_jobs
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Scrape Greenhouse jobs by role.")
-    parser.add_argument("--role", required=True, help="Role key from dataScraping/config.yaml")
+    parser.add_argument(
+        "--role",
+        required=False,
+        help="Role key or title keyword (defaults to roles listed in search.txt)",
+    )
     parser.add_argument(
         "--companies",
-        required=True,
+        required=False,
         type=Path,
-        help="TXT, YAML, or JSON file containing Greenhouse board tokens",
+        help="TXT, YAML, or JSON file containing Greenhouse board tokens (defaults to search.txt)",
     )
     parser.add_argument("--refresh", action="store_true", help="Refresh raw response caches")
     parser.add_argument("--limit-companies", type=int, help="Test with the first N companies")
@@ -335,13 +419,35 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
-    try:
-        scrape_role(
-            args.role,
-            args.refresh,
-            args.limit_companies,
-            companies_path=args.companies,
+    tokens_path = resolve_search_path(args.companies)
+    if not tokens_path.exists():
+        parser.error(
+            f"Search file not found at {tokens_path}. Please create search.txt or pass --companies."
         )
+
+    roles_to_scrape: list[str] = []
+    if args.role:
+        roles_to_scrape = [args.role]
+    else:
+        try:
+            roles_to_scrape = load_roles(tokens_path)
+        except Exception as error:
+            parser.error(str(error))
+        if not roles_to_scrape:
+            parser.error(
+                f"No --role specified and no roles found under #roles in {tokens_path}. "
+                "Specify --role or add a #roles section to search.txt."
+            )
+
+    try:
+        for target_role in roles_to_scrape:
+            LOGGER.info("Scraping for role: %s", target_role)
+            scrape_role(
+                target_role,
+                args.refresh,
+                args.limit_companies,
+                companies_path=tokens_path,
+            )
     except (ValueError, RuntimeError) as error:
         parser.error(str(error))
 

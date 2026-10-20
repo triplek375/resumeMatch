@@ -8,8 +8,11 @@ from dataScraping.greenhouse import (
     clean_html,
     filter_jobs,
     load_company_tokens,
+    load_roles,
     load_yaml,
     normalize_job,
+    parse_board_file,
+    resolve_search_path,
     scrape_role,
 )
 
@@ -35,7 +38,7 @@ def test_role_filter_is_case_insensitive_and_matches_any_keyword():
         for raw in fixture["jobs"]
     ]
 
-    selected = filter_jobs(jobs, config["roles"]["data_engineer"])
+    selected = filter_jobs(jobs, ["Data Engineer", "Analytics Engineer"])
 
     assert [job["title"] for job in selected] == ["Data Engineer", "Analytics Engineer"]
 
@@ -123,10 +126,50 @@ def test_scrape_role_writes_normalized_jobs_as_csv(tmp_path, monkeypatch):
         reader = csv.DictReader(csv_file)
         rows = list(reader)
 
-    assert len(selected) == 2
-    assert len(rows) == 2
+    assert len(selected) == 1
+    assert len(rows) == 1
     assert reader.fieldnames == [
         "id", "title", "company", "location", "url", "description", "source", "scraped_at"
     ]
     assert rows[0]["title"] == "Data Engineer"
     assert "- Own ETL workflows" in rows[0]["description"]
+
+
+def test_parse_board_file_extracts_companies_and_roles(tmp_path):
+    board_file = tmp_path / "search.txt"
+    board_file.write_text(
+        "#companies\nstripe\nairbnb\n\n#roles\ndata engineer\ncloud engineer\n",
+        encoding="utf-8",
+    )
+
+    companies, roles = parse_board_file(board_file)
+    assert companies == ["stripe", "airbnb"]
+    assert roles == ["data engineer", "cloud engineer"]
+    assert load_company_tokens(board_file) == ["stripe", "airbnb"]
+    assert load_roles(board_file) == ["data engineer", "cloud engineer"]
+
+
+def test_scrape_role_with_exact_string_without_expansion(tmp_path, monkeypatch):
+    token_path = tmp_path / "search.txt"
+    token_path.write_text(
+        "#companies\nexample\n\n#roles\ndata engineer\n",
+        encoding="utf-8",
+    )
+    fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    monkeypatch.setattr(
+        "dataScraping.greenhouse.fetch_company_jobs",
+        lambda *args: (fixture["jobs"], False),
+    )
+
+    # Scrapes strictly for the exact string "data engineer" without keyword expansion
+    selected = scrape_role(
+        "data engineer",
+        companies_path=token_path,
+        project_root=tmp_path,
+        session=object(),
+    )
+
+    output_path = tmp_path / "data" / "jobs" / "greenhouse_data_engineer.csv"
+    assert output_path.exists()
+    assert len(selected) == 1
+    assert selected[0]["title"] == "Data Engineer"

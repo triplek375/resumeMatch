@@ -1,20 +1,3 @@
-roles:
-  data_engineer:
-    - data engineer
-    - analytics engineer
-    - etl
-  cloud_engineer:
-    - cloud engineer
-    - cloud infrastructure engineer
-    - platform engineer
-  marketing:
-    - marketing
-    - growth
-    - demand generation
-  nursing:
-    - nurse
-    - nursing
-    - rn
 field_map:
   id: id
   title: title

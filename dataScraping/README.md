@@ -17,9 +17,23 @@ python -m pip install -r .\dataScraping\requirements.txt
 
 ## Run
 
+Run directly (reads target companies and roles from `search.txt` by default):
+
 ```powershell
-python -m dataScraping.greenhouse --role data_engineer --companies .\dataScraping\board_tokens.txt --limit-companies 2
-python -m dataScraping.greenhouse --role data_engineer --companies .\dataScraping\board_tokens.txt --refresh
+python -m dataScraping.greenhouse
+```
+
+Optional flags to limit companies or refresh caches:
+
+```powershell
+python -m dataScraping.greenhouse --limit-companies 2
+python -m dataScraping.greenhouse --refresh
+```
+
+You can still override the role or custom token file via arguments:
+
+```powershell
+python -m dataScraping.greenhouse --role data_engineer --companies .\search.txt
 ```
 
 The first command is useful for a small initial run. Requests use a timeout, a descriptive configurable User-Agent, randomized 1-2 second spacing, and exponential backoff for rate limits and server errors.
