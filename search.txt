@@ -1,3 +1,4 @@
+#companies
 stripe
 airbnb
 databricks
@@ -8,3 +9,6 @@ instacart
 robinhood
 coinbase
 dropbox
+
+#roles
+intern
