@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import db
 from dataScraping.greenhouse import (
     clean_html,
     filter_jobs,
@@ -19,6 +20,26 @@ from dataScraping.greenhouse import (
 
 SCRAPER_DIR = Path(__file__).resolve().parents[1]
 FIXTURE_PATH = SCRAPER_DIR / "tests" / "fixtures" / "greenhouse_response.json"
+
+
+@pytest.fixture(autouse=True)
+def mock_db_operations(monkeypatch):
+    """Mock database calls during unit tests so running MariaDB is not required."""
+    recorded = {"jobs": [], "companies": []}
+
+    def fake_save_jobs(jobs, conn=None):
+        recorded["jobs"].extend(jobs)
+        return len(jobs)
+
+    def fake_save_companies(companies, conn=None):
+        recorded["companies"].extend(companies)
+        return len(companies)
+
+    monkeypatch.setattr(db, "save_jobs", fake_save_jobs)
+    monkeypatch.setattr(db, "save_companies", fake_save_companies)
+    monkeypatch.setattr("dataScraping.greenhouse.save_jobs", fake_save_jobs, raising=False)
+    monkeypatch.setattr("dataScraping.greenhouse.save_companies", fake_save_companies, raising=False)
+    return recorded
 
 
 def test_clean_html_unescapes_content_and_keeps_paragraph_and_bullet_breaks():
@@ -96,19 +117,18 @@ def test_failed_boards_do_not_overwrite_previous_output(tmp_path, monkeypatch):
     )
 
     with pytest.raises(RuntimeError, match="No Greenhouse boards returned"):
-        from dataScraping.greenhouse import scrape_role
-
         scrape_role(
             "data_engineer",
             companies_path=token_path,
             project_root=tmp_path,
             session=object(),
+            output_path=output_path,
         )
 
     assert output_path.read_text(encoding="utf-8") == "previous results"
 
 
-def test_scrape_role_writes_normalized_jobs_as_csv(tmp_path, monkeypatch):
+def test_scrape_role_writes_normalized_jobs_as_csv_and_db(tmp_path, monkeypatch, mock_db_operations):
     token_path = tmp_path / "boards.txt"
     token_path.write_text("example\n", encoding="utf-8")
     fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
@@ -117,14 +137,15 @@ def test_scrape_role_writes_normalized_jobs_as_csv(tmp_path, monkeypatch):
         lambda *args: (fixture["jobs"], False),
     )
 
+    output_path = tmp_path / "data" / "jobs.csv"
     selected = scrape_role(
         "data_engineer",
         companies_path=token_path,
         project_root=tmp_path,
         session=object(),
+        output_path=output_path,
     )
 
-    output_path = tmp_path / "data" / "jobs.csv"
     with output_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
         reader = csv.DictReader(csv_file)
         rows = list(reader)
@@ -137,6 +158,10 @@ def test_scrape_role_writes_normalized_jobs_as_csv(tmp_path, monkeypatch):
     assert rows[0]["source"] == "greenhouse"
     assert rows[0]["title"] == "Data Engineer"
     assert "- Own ETL workflows" in rows[0]["description"]
+
+    # Also verified saved to database
+    assert len(mock_db_operations["jobs"]) == 1
+    assert mock_db_operations["jobs"][0]["title"] == "Data Engineer"
 
 
 def test_parse_board_file_extracts_companies_and_roles(tmp_path):
@@ -153,7 +178,7 @@ def test_parse_board_file_extracts_companies_and_roles(tmp_path):
     assert load_roles(board_file) == ["data engineer", "cloud engineer"]
 
 
-def test_scrape_role_with_exact_string_without_expansion(tmp_path, monkeypatch):
+def test_scrape_role_with_exact_string_without_expansion(tmp_path, monkeypatch, mock_db_operations):
     token_path = tmp_path / "search.txt"
     token_path.write_text(
         "#companies\nexample\n\n#roles\ndata engineer\n",
@@ -165,7 +190,6 @@ def test_scrape_role_with_exact_string_without_expansion(tmp_path, monkeypatch):
         lambda *args: (fixture["jobs"], False),
     )
 
-    # Scrapes strictly for the exact string "data engineer" without keyword expansion
     selected = scrape_role(
         "data engineer",
         companies_path=token_path,
@@ -173,13 +197,13 @@ def test_scrape_role_with_exact_string_without_expansion(tmp_path, monkeypatch):
         session=object(),
     )
 
-    output_path = tmp_path / "data" / "jobs.csv"
-    assert output_path.exists()
     assert len(selected) == 1
     assert selected[0]["title"] == "Data Engineer"
+    assert len(mock_db_operations["jobs"]) == 1
+    assert mock_db_operations["jobs"][0]["title"] == "Data Engineer"
 
 
-def test_scrape_multiple_roles_writes_single_jobs_csv(tmp_path, monkeypatch):
+def test_scrape_multiple_roles_saves_to_database(tmp_path, monkeypatch, mock_db_operations):
     token_path = tmp_path / "search.txt"
     token_path.write_text(
         "#companies\nexample\n\n#roles\ndata engineer\nanalytics engineer\n",
@@ -198,22 +222,13 @@ def test_scrape_multiple_roles_writes_single_jobs_csv(tmp_path, monkeypatch):
         session=object(),
     )
 
-    output_path = tmp_path / "data" / "jobs.csv"
-    assert output_path.exists()
-    assert not (tmp_path / "data" / "jobs").exists()
-    with output_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
-        reader = csv.DictReader(csv_file)
-        rows = list(reader)
-
-    assert reader.fieldnames == [
-        "source", "id", "company", "title", "location", "url", "description", "scraped_at"
-    ]
     assert len(selected) == 2
-    assert len(rows) == 2
-    assert [row["title"] for row in rows] == ["Data Engineer", "Analytics Engineer"]
+    assert [j["title"] for j in selected] == ["Data Engineer", "Analytics Engineer"]
+    assert len(mock_db_operations["jobs"]) == 2
+    assert [j["title"] for j in mock_db_operations["jobs"]] == ["Data Engineer", "Analytics Engineer"]
 
 
-def test_main_cli_writes_single_jobs_csv(tmp_path, monkeypatch):
+def test_main_cli_saves_to_database_by_default(tmp_path, monkeypatch, mock_db_operations):
     from dataScraping.greenhouse import main
 
     search_file = tmp_path / "search.txt"
@@ -234,22 +249,8 @@ def test_main_cli_writes_single_jobs_csv(tmp_path, monkeypatch):
 
     main()
 
-    output_path = tmp_path / "data" / "jobs.csv"
-    assert output_path.exists()
-    with output_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
-        reader = csv.DictReader(csv_file)
-        rows = list(reader)
-    assert len(rows) == 2
-    assert reader.fieldnames == [
-        "source", "id", "company", "title", "location", "url", "description", "scraped_at"
-    ]
-    companies_csv = tmp_path / "data" / "companies.csv"
-    assert companies_csv.exists()
-    with companies_csv.open("r", encoding="utf-8-sig", newline="") as comp_file:
-        reader = csv.DictReader(comp_file)
-        rows = list(reader)
-    assert len(rows) == 0
-    assert reader.fieldnames == ["company", "reason"]
+    assert len(mock_db_operations["jobs"]) == 2
+    assert [j["title"] for j in mock_db_operations["jobs"]] == ["Data Engineer", "Analytics Engineer"]
 
 
 def test_main_cli_custom_companies_output(tmp_path, monkeypatch):
@@ -285,7 +286,7 @@ def test_main_cli_custom_companies_output(tmp_path, monkeypatch):
     assert rows[0] == {"company": "not-found-co", "reason": "NoMatchingCompany"}
 
 
-def test_scrape_records_unmatched_companies_with_reasons(tmp_path, monkeypatch):
+def test_scrape_records_unmatched_companies_with_reasons(tmp_path, monkeypatch, mock_db_operations):
     search_file = tmp_path / "search.txt"
     search_file.write_text(
         "#companies\ncompany-matching\ncompany-no-jobs\ncompany-not-found\n\n#roles\ndata engineer\n",
@@ -311,26 +312,17 @@ def test_scrape_records_unmatched_companies_with_reasons(tmp_path, monkeypatch):
         session=object(),
     )
 
-    jobs_csv = tmp_path / "data" / "jobs.csv"
-    companies_csv = tmp_path / "data" / "companies.csv"
-
-    assert jobs_csv.exists()
-    assert companies_csv.exists()
     assert len(selected) == 1
     assert selected[0]["company"] == "Company Matching"
 
-    with companies_csv.open("r", encoding="utf-8-sig", newline="") as comp_file:
-        reader = csv.DictReader(comp_file)
-        comp_rows = list(reader)
-
-    assert reader.fieldnames == ["company", "reason"]
-    assert comp_rows == [
+    assert len(mock_db_operations["companies"]) == 2
+    assert mock_db_operations["companies"] == [
         {"company": "company-no-jobs", "reason": "NoMatchingJob"},
         {"company": "company-not-found", "reason": "NoMatchingCompany"},
     ]
 
 
-def test_failed_boards_still_write_companies_csv(tmp_path, monkeypatch):
+def test_failed_boards_still_records_unmatched_companies(tmp_path, monkeypatch, mock_db_operations):
     token_path = tmp_path / "search.txt"
     token_path.write_text("invalid-one\ninvalid-two\n", encoding="utf-8")
     monkeypatch.setattr(
@@ -346,15 +338,8 @@ def test_failed_boards_still_write_companies_csv(tmp_path, monkeypatch):
             session=object(),
         )
 
-    companies_csv = tmp_path / "data" / "companies.csv"
-    assert companies_csv.exists()
-    with companies_csv.open("r", encoding="utf-8-sig", newline="") as comp_file:
-        reader = csv.DictReader(comp_file)
-        rows = list(reader)
-
-    assert reader.fieldnames == ["company", "reason"]
-    assert rows == [
+    assert len(mock_db_operations["companies"]) == 2
+    assert mock_db_operations["companies"] == [
         {"company": "invalid-one", "reason": "NoMatchingCompany"},
         {"company": "invalid-two", "reason": "NoMatchingCompany"},
     ]
-

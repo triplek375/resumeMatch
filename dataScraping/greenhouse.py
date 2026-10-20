@@ -9,6 +9,7 @@ import logging
 import random
 import re
 import time
+import sys
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
@@ -17,9 +18,10 @@ from typing import Any, Mapping, Optional, Sequence, Union
 import requests
 import yaml
 
-
 DATA_SCRAPING_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = DATA_SCRAPING_DIR.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 CONFIG_PATH = DATA_SCRAPING_DIR / "config.yaml"
 LOGGER = logging.getLogger("dataScraping.greenhouse")
 OUTPUT_FIELDS = (
@@ -302,8 +304,10 @@ def scrape_role(
     session: Optional[requests.Session] = None,
     output_path: Optional[Path] = None,
     companies_output_path: Optional[Path] = None,
+    save_to_database: bool = True,
+    db_conn: Optional[Any] = None,
 ) -> list[dict[str, str]]:
-    """Scrape configured companies, write matching postings to jobs CSV, and log unmatched companies."""
+    """Scrape configured companies, save to database tables, and optionally export to CSV."""
     root = project_root if project_root is not None else PROJECT_ROOT
     cfg_path = config_path if config_path is not None else CONFIG_PATH
     resolved_companies_path = resolve_board_tokens_path(companies_path, root)
@@ -332,13 +336,9 @@ def scrape_role(
     request_config = config["request"]
     field_map = config["field_map"]
     cache_dir = root / "data" / "raw" / "greenhouse"
-    resolved_output_path = (
-        Path(output_path) if output_path is not None else root / "data" / "jobs.csv"
-    )
+    resolved_output_path = Path(output_path) if output_path is not None else None
     resolved_companies_output_path = (
-        Path(companies_output_path)
-        if companies_output_path is not None
-        else root / "data" / "companies.csv"
+        Path(companies_output_path) if companies_output_path is not None else None
     )
     timestamp = datetime.now(timezone.utc).isoformat()
     matching_jobs: list[dict[str, str]] = []
@@ -409,16 +409,28 @@ def scrape_role(
         if owned_session:
             http.close()
 
-    resolved_companies_output_path.parent.mkdir(parents=True, exist_ok=True)
-    with resolved_companies_output_path.open("w", encoding="utf-8-sig", newline="") as comp_file:
-        writer = csv.DictWriter(comp_file, fieldnames=COMPANIES_OUTPUT_FIELDS)
-        writer.writeheader()
-        writer.writerows(unmatched_companies)
-    LOGGER.info(
-        "unmatched_companies=%d output=%s",
-        len(unmatched_companies),
-        resolved_companies_output_path,
-    )
+    if resolved_companies_output_path is not None:
+        resolved_companies_output_path.parent.mkdir(parents=True, exist_ok=True)
+        with resolved_companies_output_path.open("w", encoding="utf-8-sig", newline="") as comp_file:
+            writer = csv.DictWriter(comp_file, fieldnames=COMPANIES_OUTPUT_FIELDS)
+            writer.writeheader()
+            writer.writerows(unmatched_companies)
+        LOGGER.info(
+            "unmatched_companies=%d output=%s",
+            len(unmatched_companies),
+            resolved_companies_output_path,
+        )
+
+    if save_to_database and unmatched_companies:
+        try:
+            from db import save_companies
+
+            saved_count = save_companies(unmatched_companies, conn=db_conn)
+            LOGGER.info("Saved %d unmatched companies to database", saved_count)
+        except Exception as error:
+            LOGGER.warning("Could not save unmatched companies to database: %s", error)
+            if resolved_companies_output_path is None and resolved_output_path is None:
+                raise
 
     if successful_boards == 0:
         raise RuntimeError(
@@ -438,17 +450,30 @@ def scrape_role(
         deduped_jobs.append(job)
     matching_jobs = deduped_jobs
 
-    resolved_output_path.parent.mkdir(parents=True, exist_ok=True)
-    with resolved_output_path.open("w", encoding="utf-8-sig", newline="") as output_file:
-        writer = csv.DictWriter(output_file, fieldnames=OUTPUT_FIELDS)
-        writer.writeheader()
-        writer.writerows(matching_jobs)
-    LOGGER.info(
-        "roles=%s total_kept=%d output=%s",
-        keywords,
-        len(matching_jobs),
-        resolved_output_path,
-    )
+    if resolved_output_path is not None:
+        resolved_output_path.parent.mkdir(parents=True, exist_ok=True)
+        with resolved_output_path.open("w", encoding="utf-8-sig", newline="") as output_file:
+            writer = csv.DictWriter(output_file, fieldnames=OUTPUT_FIELDS)
+            writer.writeheader()
+            writer.writerows(matching_jobs)
+        LOGGER.info(
+            "roles=%s total_kept=%d output=%s",
+            keywords,
+            len(matching_jobs),
+            resolved_output_path,
+        )
+
+    if save_to_database and matching_jobs:
+        try:
+            from db import save_jobs
+
+            saved_count = save_jobs(matching_jobs, conn=db_conn)
+            LOGGER.info("Saved %d matching jobs to database", saved_count)
+        except Exception as error:
+            LOGGER.warning("Could not save jobs to database: %s", error)
+            if resolved_output_path is None and resolved_companies_output_path is None:
+                raise
+
     return matching_jobs
 
 
@@ -474,13 +499,18 @@ def main() -> None:
         "--output",
         required=False,
         type=Path,
-        help="Output CSV path (defaults to data/jobs.csv)",
+        help="Optional output CSV path for jobs export",
     )
     parser.add_argument(
         "--companies-output",
         required=False,
         type=Path,
-        help="Output CSV path for unmatched companies (defaults to data/companies.csv)",
+        help="Optional output CSV path for unmatched companies export",
+    )
+    parser.add_argument(
+        "--no-db",
+        action="store_true",
+        help="Skip saving results to MariaDB database",
     )
     args = parser.parse_args()
 
@@ -517,6 +547,7 @@ def main() -> None:
             companies_path=tokens_path,
             output_path=args.output,
             companies_output_path=args.companies_output,
+            save_to_database=not args.no_db,
         )
     except (ValueError, RuntimeError) as error:
         parser.error(str(error))
