@@ -5,11 +5,15 @@ import csv
 import hashlib
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 import pymysql
 import pymysql.cursors
+from dotenv import load_dotenv
+
+load_dotenv(override=False)
 
 LOGGER = logging.getLogger("resumematch.db")
 
@@ -48,6 +52,33 @@ def compute_url_hash(
         return hashlib.sha256(url.encode("utf-8")).hexdigest()
     identity = f"{title}\0{company}\0{external_id}"
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+def normalize_version(version_value: Optional[str]) -> tuple[int, int, int]:
+    """Parse a MariaDB version string into a comparable tuple."""
+    if not version_value:
+        return (0, 0, 0)
+
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)", str(version_value))
+    if not match:
+        return (0, 0, 0)
+    return tuple(int(part) for part in match.groups())
+
+
+def get_server_version(conn: Optional[pymysql.Connection] = None) -> str:
+    """Fetch the configured MariaDB server version string."""
+    owned = conn is None
+    connection = conn or get_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT VERSION() AS version")
+            row = cursor.fetchone()
+            if not row:
+                return "unknown"
+            return str(row.get("version") or row.get("VERSION()") or "unknown")
+    finally:
+        if owned:
+            connection.close()
 
 
 def get_connection(
@@ -214,6 +245,19 @@ def save_companies(
             connection.close()
 
 
+def format_vector(embedding: Sequence[float]) -> str:
+    """Serialize a dense vector to MariaDB Vec_FromText string form."""
+    if hasattr(embedding, "tolist"):
+        values = embedding.tolist()
+    elif isinstance(embedding, (list, tuple)):
+        values = list(embedding)
+    else:
+        values = list(embedding)
+    if not values:
+        return "[]"
+    return "[" + ", ".join(f"{float(x):.8f}" for x in values) + "]"
+
+
 def update_job_embedding(
     job_id: Any,
     embedding: Sequence[float],
@@ -224,14 +268,33 @@ def update_job_embedding(
     connection = conn or get_connection()
     try:
         with connection.cursor() as cursor:
-            if isinstance(embedding, (list, tuple)):
-                vec_str = "[" + ", ".join(f"{float(x):.8f}" for x in embedding) + "]"
-            else:
-                vec_str = str(embedding)
             cursor.execute(
                 "UPDATE jobs SET embedding = Vec_FromText(%s) WHERE id = %s",
-                (vec_str, job_id),
+                (format_vector(embedding), job_id),
             )
+    finally:
+        if owned:
+            connection.close()
+
+
+def get_jobs_missing_embedding(
+    conn: Optional[pymysql.Connection] = None,
+    limit: Optional[int] = None,
+) -> list[dict[str, Any]]:
+    """Fetch jobs whose embedding has not been generated yet."""
+    owned = conn is None
+    connection = conn or get_connection()
+    try:
+        with connection.cursor() as cursor:
+            sql = (
+                "SELECT id, source, external_id, title, company, location, "
+                "url, url_hash, description, scraped_at "
+                "FROM jobs WHERE embedding IS NULL ORDER BY id ASC"
+            )
+            if limit is not None and limit > 0:
+                sql += f" LIMIT {int(limit)}"
+            cursor.execute(sql)
+            return list(cursor.fetchall())
     finally:
         if owned:
             connection.close()
@@ -277,6 +340,120 @@ def get_companies(
             connection.close()
 
 
+def upsert_resume(
+    name: str,
+    content: str,
+    model: str,
+    embedding: Sequence[float],
+    conn: Optional[pymysql.Connection] = None,
+) -> dict[str, Any]:
+    """Insert or update a resume, keyed by a SHA-256 content hash."""
+    content_hash = hashlib.sha256((content or "").encode("utf-8")).hexdigest()
+    owned = conn is None
+    connection = conn or get_connection()
+    try:
+        with connection.cursor() as cursor:
+            vec_str = format_vector(embedding)
+            cursor.execute(
+                """
+                INSERT INTO resumes (name, content, content_hash, model, embedding)
+                VALUES (%s, %s, %s, %s, Vec_FromText(%s))
+                ON DUPLICATE KEY UPDATE
+                    name = VALUES(name),
+                    content = VALUES(content),
+                    model = VALUES(model),
+                    embedding = VALUES(embedding)
+                """,
+                (name, content, content_hash, model, vec_str),
+            )
+            cursor.execute(
+                "SELECT id, name, content, content_hash, model, embedding FROM resumes WHERE content_hash = %s",
+                (content_hash,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return {}
+            return dict(row)
+    finally:
+        if owned:
+            connection.close()
+
+
+def search_similar_jobs(
+    embedding: Sequence[float],
+    top_n: int = 20,
+    role: Optional[str] = None,
+    conn: Optional[pymysql.Connection] = None,
+) -> list[dict[str, Any]]:
+    """Return top jobs ranked by cosine similarity against an embedding."""
+    if top_n <= 0:
+        return []
+
+    owned = conn is None
+    connection = conn or get_connection()
+    try:
+        with connection.cursor() as cursor:
+            if role:
+                role_clause = " AND j.title LIKE %s "
+                params: Sequence[Any] = (format_vector(embedding), f"%{role}%", top_n)
+            else:
+                role_clause = " "
+                params = (format_vector(embedding), top_n)
+
+            sql = (
+                "SELECT j.id, j.title, j.company, j.location, j.url, "
+                "j.description, 1 - VEC_DISTANCE_COSINE(j.embedding, Vec_FromText(%s)) AS score "
+                "FROM jobs j "
+                "WHERE j.embedding IS NOT NULL "
+                + role_clause +
+                "ORDER BY score DESC LIMIT %s"
+            )
+            cursor.execute(sql, params)
+            return list(cursor.fetchall())
+    finally:
+        if owned:
+            connection.close()
+
+
+def save_matches(
+    resume_id: Any,
+    matches: Sequence[Mapping[str, Any]],
+    conn: Optional[pymysql.Connection] = None,
+) -> int:
+    """Insert or update top matches for a resume."""
+    if not matches:
+        return 0
+
+    owned = conn is None
+    connection = conn or get_connection()
+    try:
+        with connection.cursor() as cursor:
+            sql = """
+                INSERT INTO match_results (resume_id, job_id, role, score)
+                VALUES (%s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    role = VALUES(role),
+                    score = VALUES(score),
+                    matched_at = CURRENT_TIMESTAMP
+            """
+            rows = []
+            for match in matches:
+                rows.append(
+                    (
+                        resume_id,
+                        match.get("job_id") or match.get("id"),
+                        match.get("role") or match.get("title"),
+                        float(match.get("score", 0.0)),
+                    )
+                )
+            if rows:
+                cursor.executemany(sql, rows)
+            return len(rows)
+    finally:
+        if owned:
+            connection.close()
+
+
 def migrate_csv_files(
     jobs_csv_path: Optional[Path] = None,
     companies_csv_path: Optional[Path] = None,
@@ -305,6 +482,29 @@ def migrate_csv_files(
     return jobs_migrated, companies_migrated
 
 
+def get_jobs_embedding_type(conn: Optional[pymysql.Connection] = None) -> str:
+    """Return the jobs.embedding column definition as reported by MariaDB."""
+    owned = conn is None
+    connection = conn or get_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COLUMN_TYPE
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = %s
+                  AND TABLE_NAME = 'jobs'
+                  AND COLUMN_NAME = 'embedding'
+                """,
+                (DB_NAME,),
+            )
+            row = cursor.fetchone()
+            return str(row.get("COLUMN_TYPE") if row else "")
+    finally:
+        if owned:
+            connection.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="ResumeMatch MariaDB utility.")
     subparsers = parser.add_subparsers(dest="command")
@@ -321,7 +521,21 @@ def main() -> None:
             with conn.cursor() as cursor:
                 cursor.execute("SHOW TABLES")
                 tables = [list(r.values())[0] for r in cursor.fetchall()]
-            print("Successfully connected to MariaDB!")
+
+            version = get_server_version(conn)
+            print(f"Server version: {version}")
+            version_tuple = normalize_version(version)
+            if version_tuple < (11, 7, 1):
+                print("WARNING: MariaDB is older than 11.7.1; VECTOR support may be unavailable.")
+
+            embedding_type = get_jobs_embedding_type(conn)
+            print(f"jobs.embedding: {embedding_type}")
+            normalized_type = str(embedding_type or "").replace(" ", "").lower()
+            if normalized_type == "vector(1024)":
+                print("Confirmed: jobs.embedding is VECTOR(1024).")
+            else:
+                print(f"WARNING: jobs.embedding type is {embedding_type or 'unknown'}, expected VECTOR(1024).")
+
             print(f"Database: {DB_NAME}")
             print(f"Tables: {', '.join(tables)}")
             conn.close()
