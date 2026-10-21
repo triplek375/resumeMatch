@@ -137,3 +137,78 @@ def test_update_job_embedding_with_mock_connection():
     assert params[1] == 1
     assert "0.10000000" in params[0]
 
+
+def test_get_jobs_missing_embedding_with_mock_connection():
+    mock_cursor = MagicMock()
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+    mock_cursor.fetchall.return_value = [{"id": 7, "title": "ML Engineer"}]
+
+    jobs = db.get_jobs_missing_embedding(conn=mock_conn, limit=5)
+    assert len(jobs) == 1
+    assert jobs[0]["title"] == "ML Engineer"
+    sql = mock_cursor.execute.call_args[0][0]
+    assert "WHERE embedding IS NULL" in sql
+    assert "LIMIT 5" in sql
+
+
+def test_upsert_resume_with_mock_connection():
+    mock_cursor = MagicMock()
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+    mock_cursor.fetchone.return_value = {"id": 42, "content_hash": "abc"}
+
+    resume = db.upsert_resume(
+        name="Ada",
+        content="Python engineer",
+        model="BAAI/bge-m3",
+        embedding=[0.1, 0.2, 0.3],
+        conn=mock_conn,
+    )
+
+    assert resume["id"] == 42
+    sql, params = mock_cursor.execute.call_args_list[0][0]
+    assert "INSERT INTO resumes" in sql
+    assert params[0] == "Ada"
+    assert params[2] == hashlib.sha256(b"Python engineer").hexdigest()
+    assert "0.10000000" in params[4]
+
+
+def test_search_similar_jobs_with_mock_connection():
+    mock_cursor = MagicMock()
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+    mock_cursor.fetchall.return_value = [{"id": 2, "title": "Data Engineer", "score": 0.92}]
+
+    results = db.search_similar_jobs([0.1, 0.2, 0.3], top_n=5, role="Data", conn=mock_conn)
+    assert len(results) == 1
+    assert results[0]["title"] == "Data Engineer"
+    sql, params = mock_cursor.execute.call_args[0]
+    assert "VEC_DISTANCE_COSINE" in sql
+    assert "AND j.title LIKE %s" in sql
+    assert params[1] == "%Data%"
+    assert params[2] == 5
+
+
+def test_save_matches_with_mock_connection():
+    mock_cursor = MagicMock()
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+
+    count = db.save_matches(
+        resume_id=8,
+        matches=[
+            {"job_id": 11, "title": "ML Engineer", "score": 0.81},
+            {"id": 12, "title": "Data Engineer", "score": 0.74},
+        ],
+        conn=mock_conn,
+    )
+
+    assert count == 2
+    sql, params = mock_cursor.executemany.call_args[0]
+    assert "INSERT INTO match_results" in sql
+    assert params[0][0] == 8
+    assert params[0][1] == 11
+    assert params[0][2] == "ML Engineer"
+    assert params[1][1] == 12
+
